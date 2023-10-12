@@ -1,7 +1,7 @@
 package intraprocedural
 
 import io.shiftleft.codepropertygraph.Cpg
-import execpathextractor.CFGraphPathExtractor.getAllExecPathsByLines
+import execpathextractor.CFGraphPathExtractor.printAllExecPathsByLines
 import testfixtures.JavaSrcCode2CpgFixture
 
 class IntraProceduralTest extends JavaSrcCode2CpgFixture(withOssDataflow = true) {
@@ -17,7 +17,7 @@ class IntraProceduralTest extends JavaSrcCode2CpgFixture(withOssDataflow = true)
     val source = scala.io.Source.fromFile(fileAbsPath).mkString
     println(s"Source: \n$source\n")
     val cpg = getCpg(source)
-    getAllExecPathsByLines(source, methodName, varName, lineNumber)(cpg)
+    printAllExecPathsByLines(source, methodName, varName, lineNumber)(cpg)
   }
 
 //  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedIfTest.java", "main", "e", 19)

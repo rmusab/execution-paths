@@ -62,7 +62,7 @@ object CFGraphPathExtractor {
             // then it is an untriggered control statement, which we decided to filter
             val extendedPath =
             if (!(currentPath.nonEmpty && currentNode.controls.nonEmpty && !currentNode.controls.contains(currentPath.last))
-              && (currentNode.isCall)) {
+              && currentNode.isCall) {
               currentPath :+ currentNode
             } else {
               currentPath
@@ -103,7 +103,7 @@ object CFGraphPathExtractor {
     cpg.method(methodName).filename(fileName).cfgNode.code(varName).lineNumber(lineNumber)
   }
 
-  def getAllExecPathsByLines(source: String, methodName: String, varName: String, lineNumber: Int)(implicit cpg: Cpg): Unit = {
+  def printAllExecPathsByLines(source: String, methodName: String, varName: String, lineNumber: Int)(implicit cpg: Cpg): Unit = {
 //    val startNodes = getNodesByMethodVarLineNum("Test0.java", methodName, varName, lineNumber)(cpg)
     val startNodes = getNodesByMethodLineNum("Test0.java", methodName, lineNumber)(cpg)
     val allExecPaths = generateAllExecPaths(startNodes.next)(cpg)
