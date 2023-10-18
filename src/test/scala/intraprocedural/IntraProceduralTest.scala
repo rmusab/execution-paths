@@ -2,7 +2,9 @@ package intraprocedural
 
 import io.shiftleft.codepropertygraph.Cpg
 import execpathextractor.CFGraphPathExtractor.printAllExecPathsByLines
+import execpathextractor.CFGraphPathExtractor.getBackwardPaths
 import testfixtures.JavaSrcCode2CpgFixture
+import io.shiftleft.semanticcpg.language.*
 
 class IntraProceduralTest extends JavaSrcCode2CpgFixture(withOssDataflow = true) {
 
@@ -20,10 +22,22 @@ class IntraProceduralTest extends JavaSrcCode2CpgFixture(withOssDataflow = true)
     printAllExecPathsByLines(source, methodName, varName, lineNumber)(cpg)
   }
 
+  def testGetBackwardPaths(fileAbsPath: String, methodName: String, varName: String, lineNumber: Int): Unit = {
+    val sourceCode = scala.io.Source.fromFile(fileAbsPath).mkString
+    println(s"Source: \n$sourceCode\n")
+    val cpg = getCpg(sourceCode)
+    val sink = cpg.method(methodName).filename("Test0.java").cfgNode.code(varName).lineNumber(lineNumber).next
+    val source = cpg.method(methodName).parameter.next
+    val paths = getBackwardPaths(sink, source)
+    println(paths.map(x => x.path).head.map(p => p.node.code).mkString("\n"))
+  }
+
 //  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedIfTest.java", "main", "e", 19)
 //  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/Loop1.java", "main", "i", 4)
 //  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/Loop2.java", "main", "i", 5)
 //  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/Loop3.java", "main", "i", 6)
-  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedLoops1.java", "main", "a", 12)
+//  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedLoops1.java", "main", "a", 12)
+  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedLoopIfs.java", "getISmtokenPos", "num", 16)
+//  testGetBackwardPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedLoopIfs2.java", "getISmtokenPos", "file", 27)
 
 }
