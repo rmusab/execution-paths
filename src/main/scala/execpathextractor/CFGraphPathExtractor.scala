@@ -1,6 +1,7 @@
 package execpathextractor
 
 import io.shiftleft.codepropertygraph.generated.nodes.*
+import io.joern.dataflowengineoss.language.{ExtendedCfgNode, toExtendedCfgNode}
 import io.shiftleft.codepropertygraph.Cpg
 //import io.shiftleft.codepropertygraph.cpgloading.CpgLoader
 import io.shiftleft.semanticcpg.language.*
@@ -52,8 +53,29 @@ object CFGraphPathExtractor {
     result
   }
 
-  // Handle situation: unrealized (excluded) LOOP or IF statement contain data that is later used in the sink (or should this already have been handled by the developer?)
+  def traverseDdgBackwards(startNode: CfgNode)(implicit cpg: Cpg): Set[CfgNode] = {
+    var visited = Set[CfgNode]()
+    var queue = List[CfgNode](startNode)
+
+    while (queue.nonEmpty) {
+      val currentNode = queue.head
+      queue = queue.tail
+
+      if (!visited.contains(currentNode)) {
+        visited += currentNode
+        // Find the predecessors of the current node
+        val predecessors = toExtendedCfgNode(currentNode).ddgIn.l
+        queue ++= predecessors
+      }
+    }
+
+    visited
+  }
+
+  // Handle situation: excluded control statement blocks contain data that is later used in the sink
   def generateAllExecPaths(nodeToExpand: CfgNode, steps: Int = Int.MaxValue)(implicit cpg: Cpg): List[List[CfgNode]] = {
+    // Obtain the set of all ddg-preceding node to the given one
+    val ddgPrevNodes = traverseDdgBackwards(nodeToExpand)
 
     @annotation.tailrec
     def iterate(nodesToExpand: List[(CfgNode, List[CfgNode], MultiSet[CfgNode])], acc: List[List[CfgNode]], stepsLeft: Int): List[List[CfgNode]] = {
@@ -64,7 +86,52 @@ object CFGraphPathExtractor {
           if (stepsLeft == 0 || currentNode.isEmpty) {
             iterate(rest, acc, stepsLeft)
           } else {
-            // Extend the current path by an incoming CALL node
+            // Extend the current path by an incoming node.
+            // Filter the current node if it is not one of the predecessors
+            // to the sink with respect to data dependency
+            val extendedPath =
+            if (ddgPrevNodes.contains(currentNode)) {
+              currentPath :+ currentNode
+            } else {
+              currentPath
+            }
+
+            // Handle loops
+            val updatedVisitedNodes = visitedNodes.add(currentNode)
+            val isLoopNode = updatedVisitedNodes.count(currentNode) >= 3
+
+            // Branch from the current node
+            val branchingNodes = if (isLoopNode) List() else currentNode.cfgIn.dedup.map(_.asInstanceOf[CfgNode]).toList
+            //            val branchingNodesCodes = if (isLoopNode) List() else currentNode.cfgIn.dedup.map(_.asInstanceOf[CfgNode]).code.l.mkString("\n")
+            //            println(s"Current node: ${currentNode.code}\nExtended path: ${extendedPath.code.l}\nBranching into nodes: \n$branchingNodesCodes\n\n")
+
+            if (branchingNodes.isEmpty) {
+              if (!isLoopNode) iterate(rest, extendedPath :: acc, stepsLeft) else iterate(rest, acc, stepsLeft)
+            } else {
+              // Extend the list of nodes to expand with the branching nodes and the extended path
+              val newNodesToExpand = branchingNodes.map(bn => (bn, extendedPath, updatedVisitedNodes))
+              iterate(rest ::: newNodesToExpand, acc, stepsLeft - 1)
+            }
+          }
+      }
+    }
+
+    iterate(List((nodeToExpand, List(), MultiSet.empty[CfgNode])), Nil, steps)
+  }
+
+  // Version without filtering nodes by DDG
+  def generateAllExecPathsNoFiltering(nodeToExpand: CfgNode, steps: Int = Int.MaxValue)(implicit cpg: Cpg): List[List[CfgNode]] = {
+
+    @annotation.tailrec
+    def iterate(nodesToExpand: List[(CfgNode, List[CfgNode], MultiSet[CfgNode])], acc: List[List[CfgNode]], stepsLeft: Int): List[List[CfgNode]] = {
+      nodesToExpand match {
+        case Nil => acc
+        case (currentNode, currentPath, visitedNodes) :: rest =>
+
+          if (stepsLeft == 0 || currentNode.isEmpty) {
+            iterate(rest, acc, stepsLeft)
+          } else {
+            // Extend the current path by an incoming node
             val extendedPath = currentPath :+ currentNode
 
             // Handle loops
@@ -90,8 +157,8 @@ object CFGraphPathExtractor {
     iterate(List((nodeToExpand, List(), MultiSet.empty[CfgNode])), Nil, steps)
   }
 
-  // Handle situation: unrealized (excluded) LOOP or IF statement contain data that is later used in the sink (or should this already have been handled by the developer?)
-  def generateAllExecPaths1(nodeToExpand: CfgNode, steps: Int = Int.MaxValue)(implicit cpg: Cpg): List[List[CfgNode]] = {
+  // Version that attempts to handle unrealized loop and conditional control statements
+  def generateAllExecUnrealControl(nodeToExpand: CfgNode, steps: Int = Int.MaxValue)(implicit cpg: Cpg): List[List[CfgNode]] = {
 
     @annotation.tailrec
     def iterate(nodesToExpand: List[(CfgNode, List[CfgNode], MultiSet[CfgNode])], acc: List[List[CfgNode]], stepsLeft: Int): List[List[CfgNode]] = {
@@ -147,9 +214,8 @@ object CFGraphPathExtractor {
     iterate(List((nodeToExpand, List(), MultiSet.empty[CfgNode])), Nil, steps)
   }
 
-  // Add feature: filter unrealized loop statements?
-  // Handle situation: unrealized loop or if statement contains data that is used in the sink later on (should it be already handled by the developer?)
-  def generateAllExecPaths0(nodeToExpand: CfgNode, steps: Int = Int.MaxValue)(implicit cpg: Cpg): List[List[CfgNode]] = {
+  // Version that attempts to handle unrealized conditional control statements
+  def generateAllExecPathsUnrealCond(nodeToExpand: CfgNode, steps: Int = Int.MaxValue)(implicit cpg: Cpg): List[List[CfgNode]] = {
 
     @annotation.tailrec
     def iterate(nodesToExpand: List[(CfgNode, List[CfgNode], MultiSet[CfgNode])], acc: List[List[CfgNode]], stepsLeft: Int): List[List[CfgNode]] = {

@@ -37,7 +37,7 @@ class IntraProceduralTest extends JavaSrcCode2CpgFixture(withOssDataflow = true)
 //  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/Loop2.java", "main", "i", 5)
 //  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/Loop3.java", "main", "i", 6)
 //  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedLoops1.java", "main", "a", 12)
-  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedLoopIfs.java", "getISmtokenPos", "num", 16)
-//  testGetBackwardPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedLoopIfs2.java", "getISmtokenPos", "file", 27)
+//  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedLoopIfs.java", "getISmtokenPos", "num", 16)
+  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedLoopIfs2.java", "getISmtokenPos", "file", 27)
 
 }
