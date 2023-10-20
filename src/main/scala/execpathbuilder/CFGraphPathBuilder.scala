@@ -1,4 +1,4 @@
-package execpathextractor
+package execpathbuilder
 
 import io.shiftleft.codepropertygraph.generated.nodes.*
 import io.joern.dataflowengineoss.language.{ExtendedCfgNode, toExtendedCfgNode}
@@ -12,7 +12,7 @@ import io.joern.dataflowengineoss.queryengine.{Engine, TableEntry, EngineContext
 
 import utils.ExecPath2CodeExtractor
 
-object CFGraphPathExtractor {
+object CFGraphPathBuilder {
 
   // Immutable MultiSet implementation.
   // Time complexity:
@@ -70,6 +70,81 @@ object CFGraphPathExtractor {
     }
 
     visited
+  }
+
+  def traverseDdgBackwardsInterProc(startNode: CfgNode)(implicit cpg: Cpg): Set[CfgNode] = {
+    var visited = Set[CfgNode]()
+    var queue = List[CfgNode](startNode)
+
+    while (queue.nonEmpty) {
+      val currentNode = queue.head
+      queue = queue.tail
+
+      if (!visited.contains(currentNode)) {
+        visited += currentNode
+        // Find the predecessors of the current node
+        var predecessors = toExtendedCfgNode(currentNode).ddgIn.l
+        // If there are no preceding nodes to the current one,
+        // try to go backwards inter-procedurally
+        if (predecessors.isEmpty) {
+          predecessors = currentNode.method.callIn.dedup.map(_.asInstanceOf[CfgNode]).l
+        }
+        queue ++= predecessors
+      }
+    }
+
+    visited
+  }
+
+  def generateAllExecPathsInterProc(nodeToExpand: CfgNode, steps: Int = Int.MaxValue)(implicit cpg: Cpg): List[List[CfgNode]] = {
+    // Obtain the set of all ddg-preceding node to the given one
+    val ddgPrevNodes = traverseDdgBackwardsInterProc(nodeToExpand)
+
+    @annotation.tailrec
+    def iterate(nodesToExpand: List[(CfgNode, List[CfgNode], MultiSet[CfgNode])], acc: List[List[CfgNode]], stepsLeft: Int): List[List[CfgNode]] = {
+      nodesToExpand match {
+        case Nil => acc
+        case (currentNode, currentPath, visitedNodes) :: rest =>
+
+          if (stepsLeft == 0 || currentNode.isEmpty) {
+            iterate(rest, acc, stepsLeft)
+          } else {
+            // Extend the current path by an incoming node.
+            // Filter the current node if it is not one of the predecessors
+            // to the sink with respect to data dependency
+            val extendedPath =
+            if (ddgPrevNodes.contains(currentNode)) {
+              currentPath :+ currentNode
+            } else {
+              currentPath
+            }
+
+            // Handle loops
+            val updatedVisitedNodes = visitedNodes.add(currentNode)
+            val isLoopNode = updatedVisitedNodes.count(currentNode) >= 3
+
+            // Branch from the current node
+            var branchingNodes = if (isLoopNode) List() else currentNode.cfgIn.dedup.map(_.asInstanceOf[CfgNode]).toList
+            // If there is no branching in the current node,
+            // try to extend the path inter-procedurally
+            if (branchingNodes.isEmpty && !isLoopNode) {
+              branchingNodes = currentNode.method.callIn.dedup.map(_.asInstanceOf[CfgNode]).toList
+            }
+            val branchingNodesCodes = branchingNodes.iterator.code.l.mkString("\n")
+            println(s"Current node: ${currentNode.code}\nExtended path: ${extendedPath.code.l}\nBranching into nodes: \n$branchingNodesCodes\n\n")
+
+            if (branchingNodes.isEmpty) {
+              if (!isLoopNode) iterate(rest, extendedPath :: acc, stepsLeft) else iterate(rest, acc, stepsLeft)
+            } else {
+              // Extend the list of nodes to expand with the branching nodes and the extended path
+              val newNodesToExpand = branchingNodes.map(bn => (bn, extendedPath, updatedVisitedNodes))
+              iterate(rest ::: newNodesToExpand, acc, stepsLeft - 1)
+            }
+          }
+      }
+    }
+
+    iterate(List((nodeToExpand, List(), MultiSet.empty[CfgNode])), Nil, steps)
   }
 
   // Handle situation: excluded control statement blocks contain data that is later used in the sink
@@ -276,7 +351,8 @@ object CFGraphPathExtractor {
   def printAllExecPathsByLines(source: String, methodName: String, varName: String, lineNumber: Int)(implicit cpg: Cpg): Unit = {
     val startNodes = getNodesByMethodVarLineNum("Test0.java", methodName, varName, lineNumber)(cpg)
 //    val startNodes = getNodesByMethodLineNum("Test0.java", methodName, lineNumber)(cpg)
-    val allExecPaths = generateAllExecPaths(startNodes.next)(cpg)
+//    val allExecPaths = generateAllExecPaths(startNodes.head)(cpg)
+    val allExecPaths = generateAllExecPathsInterProc(startNodes.head)(cpg)
     for ((execPath, i) <- allExecPaths.zipWithIndex) {
       val execPathStr = execPath.reverseIterator.code.l.mkString("\n")
       val execPathCodeStr = MyExecPath2CodeExtractor(source).extract(execPath)(cpg).mkString("\n")
