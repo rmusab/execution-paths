@@ -96,6 +96,70 @@ object CFGraphPathBuilder {
     visited
   }
 
+  def generateAllExecPathsInterProcWithForwardPasses(nodeToExpand: CfgNode, steps: Int = Int.MaxValue)(implicit cpg: Cpg): List[List[CfgNode]] = {
+
+    @annotation.tailrec
+    def iterate(nodesToExpand: List[(CfgNode, List[CfgNode], MultiSet[CfgNode])], acc: List[List[CfgNode]], ddgPrevNodes: Set[CfgNode], stepsLeft: Int): List[List[CfgNode]] = {
+      nodesToExpand match {
+        case Nil => acc
+        case (currentNode, currentPath, visitedNodes) :: rest =>
+
+          if (stepsLeft == 0 || currentNode.isEmpty) {
+            iterate(rest, acc, ddgPrevNodes, stepsLeft)
+          } else {
+            // Extend the current path by an incoming node.
+            // Filter the current node if it is not one of the predecessors
+            // to the sink with respect to data dependency
+            val extendedPath =
+            if (ddgPrevNodes.contains(currentNode)) {
+              currentPath :+ currentNode
+            } else {
+              currentPath
+            }
+
+            // Handle loops
+            val updatedVisitedNodes = visitedNodes.add(currentNode)
+            val isLoopNode = updatedVisitedNodes.count(currentNode) >= 3
+
+            // If the current node calls a non-external method,
+            // then traverse it
+            val calleeAcc =
+            if (currentNode.isCall
+                && currentNode.asInstanceOf[Call].callee.nonEmpty
+                && !currentNode.asInstanceOf[Call].callee.head.isExternal) {  // to handle: what if there are multiple signatures?
+              val calleeReturnNode = currentNode.asInstanceOf[Call].callee.head.cfgNode.filter(_.isReturn).head  // to handle: what if there are multiple return statements in the callee method?
+              val calleeDdgPrevNodes = traverseDdgBackwardsInterProc(calleeReturnNode)
+              iterate(List((calleeReturnNode, currentPath, visitedNodes)), Nil, calleeDdgPrevNodes, steps - 1)
+            } else {
+              List(List[CfgNode]())
+            }
+            val extendedAcc = acc ::: calleeAcc
+            // Branch from the current node within the scope of the current method
+            var branchingNodes = if (isLoopNode) List() else currentNode.cfgIn.dedup.map(_.asInstanceOf[CfgNode]).toList
+            // If there is no branching in the current node,
+            // try to extend the path inter-procedurally
+            if (branchingNodes.isEmpty && !isLoopNode) {
+              branchingNodes = currentNode.method.callIn.dedup.map(_.asInstanceOf[CfgNode]).toList
+            }
+            val branchingNodesCodes = branchingNodes.iterator.code.l.mkString("\n")
+            println(s"Current node: ${currentNode.code}\nExtended path: ${extendedPath.code.l}\nBranching into nodes: \n$branchingNodesCodes\n\n")
+
+            if (branchingNodes.isEmpty) {
+              if (!isLoopNode) iterate(rest, extendedPath :: acc, ddgPrevNodes, stepsLeft) else iterate(rest, acc, ddgPrevNodes, stepsLeft)
+            } else {
+              // Extend the list of nodes to expand with the branching nodes and the extended path
+              val newNodesToExpand = branchingNodes.map(bn => (bn, extendedPath, updatedVisitedNodes))
+              iterate(rest ::: newNodesToExpand, acc, ddgPrevNodes, stepsLeft - 1)
+            }
+          }
+      }
+    }
+
+    // Obtain the set of all ddg-preceding node to the given one
+    val ddgPrevNodes = traverseDdgBackwardsInterProc(nodeToExpand)
+    iterate(List((nodeToExpand, List(), MultiSet.empty[CfgNode])), Nil, ddgPrevNodes, steps)
+  }
+
   def generateAllExecPathsInterProc(nodeToExpand: CfgNode, steps: Int = Int.MaxValue)(implicit cpg: Cpg): List[List[CfgNode]] = {
     // Obtain the set of all ddg-preceding node to the given one
     val ddgPrevNodes = traverseDdgBackwardsInterProc(nodeToExpand)
