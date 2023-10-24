@@ -4,7 +4,7 @@ public class MainClass {
         for (int i = savedPos - 1; i >= 0; i--) {
             if (isDSeparator(str.charAt(i))) {
                 if (i >= 2 && isDSeparator(str.charAt(i - 2))) {
-                    num = i - 2;
+                    num = i - 1;
                 } else {
                     num = i;
                 }

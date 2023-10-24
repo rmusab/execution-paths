@@ -21,6 +21,11 @@ object CFGraphPathBuilder {
   // `remove` is O(log(n))
   object MultiSet {
     def empty[T]: MultiSet[T] = new MultiSet(Map.empty[T, Int])
+
+    def fromSet[T](set: Set[T]): MultiSet[T] = {
+      val counts = set.map(e => (e, 1)).toMap
+      new MultiSet(counts)
+    }
   }
   class MultiSet[T](private val counts: Map[T, Int]) {
 
@@ -104,16 +109,13 @@ object CFGraphPathBuilder {
       stack match {
         case Nil => visited
         case currentNode :: rest =>
-          if (visited.count(currentNode) >= 2) {
+          if (visited.count(currentNode) >= 3) {
             dfs(rest, visited, callInStack)
           } else {
-            // Handle loops
             val updatedVisited = visited.add(currentNode)
-            val isLoopNode = updatedVisited.count(currentNode) >= 3
             // Find the predecessors of the current node
             var newCallInStack = callInStack
-            var predecessors: List[CfgNode] = if (isLoopNode) List()
-            else {
+            var predecessors: List[CfgNode] =
               if (currentNode.isCall
                 && currentNode.asInstanceOf[Call].callOut.nonEmpty
                 && !currentNode.asInstanceOf[Call].callOut.head.cfgNode.exists(visited.contains)
@@ -122,13 +124,11 @@ object CFGraphPathBuilder {
                 val calleeMethod = currentNode.asInstanceOf[Call].callOut.head
                 val calleeReturnNode = calleeMethod.cfgNode.filter(_.isReturn).head // to handle: what if there are multiple return statements in the callee method?
                 newCallInStack = newCallInStack :+ currentNode
-//                println(s"Current node: ${currentNode.code}\nPredecessors: \n${List(calleeReturnNode.code)}\nNew call in stack:${newCallInStack.iterator.code.l}\n\n")
                 List(calleeReturnNode)
               } else toExtendedCfgNode(currentNode).ddgIn.l
-            }
             // If there are no preceding nodes to the current one,
             // try to go backwards inter-procedurally
-            if (predecessors.isEmpty && !isLoopNode) {
+            if (predecessors.isEmpty) {
               if (callInStack.nonEmpty) {
                 predecessors = List(newCallInStack.head)
                 newCallInStack = newCallInStack.tail
@@ -136,11 +136,7 @@ object CFGraphPathBuilder {
                 predecessors = currentNode.method.callIn.dedup.map(_.asInstanceOf[CfgNode]).l
               }
             }
-//            if (currentNode.code == "file") {
-//              val branchingNodesCodes = predecessors.iterator.code.l.mkString("\n")
-//              println(s"Current node: ${currentNode.code}\nVisited: ${visited}\nBranching into nodes: \n$predecessors\nNew call in stack:$newCallInStack\n\n")
-//            }
-            if (!isLoopNode) dfs(predecessors ++ rest, updatedVisited, newCallInStack) else dfs(rest, updatedVisited, newCallInStack)
+            dfs(predecessors ++ rest, updatedVisited, newCallInStack)
           }
       }
     }
@@ -151,15 +147,17 @@ object CFGraphPathBuilder {
   def generateAllExecPathsInterProcWithCrawlIn(nodeToExpand: CfgNode, steps: Int = Int.MaxValue)(implicit cpg: Cpg): List[List[CfgNode]] = {
     // Obtain the set of all ddg-preceding node to the given one
     val ddgPrevNodes = traverseDdgBackwardsInterProcWithCrawlIn(nodeToExpand)
+//    val ddgPrevNodes = MultiSet.fromSet[CfgNode](cpg.identifier.toSet ++ cpg.call.toSet)  // take all nodes
 
+    // nodesToExpand: (currentNode: CfgNode, currentPath: List[CfgNode], visitedNodes: MultiSet[CfgNode], callInStack: List[CfgNode])
     @annotation.tailrec
-    def iterate(nodesToExpand: List[(CfgNode, List[CfgNode], MultiSet[CfgNode])], acc: List[List[CfgNode]], callInStack: List[CfgNode], stepsLeft: Int): List[List[CfgNode]] = {
+    def iterate(nodesToExpand: List[(CfgNode, List[CfgNode], MultiSet[CfgNode], List[CfgNode])], acc: List[List[CfgNode]], stepsLeft: Int): List[List[CfgNode]] = {
       nodesToExpand match {
         case Nil => acc
-        case (currentNode, currentPath, visitedNodes) :: rest =>
+        case (currentNode, currentPath, visitedNodes, callInStack) :: rest =>
 
           if (stepsLeft == 0 || currentNode.isEmpty) {
-            iterate(rest, acc, callInStack, stepsLeft)
+            iterate(rest, acc, stepsLeft)
           } else {
             // Extend the current path by an incoming node.
             // Filter the current node if it is not one of the predecessors
@@ -179,10 +177,9 @@ object CFGraphPathBuilder {
             var newCallInStack = callInStack
             var branchingNodes: List[CfgNode] = if (isLoopNode) List()
             else {
-//              if (updatedVisitedNodes.count(currentNode) < 2
               if (currentNode.isCall
                 && currentNode.asInstanceOf[Call].callOut.nonEmpty
-                && !currentNode.asInstanceOf[Call].callOut.head.cfgNode.exists(updatedVisitedNodes.contains)
+//                && !currentNode.asInstanceOf[Call].callOut.head.cfgNode.exists(updatedVisitedNodes.contains)  // this callee method has not already been visited
                 && !currentNode.asInstanceOf[Call].callOut.head.isExternal // to handle: what if there are multiple signatures?
                 && currentNode.asInstanceOf[Call].callOut.head.cfgNode.exists(_.isReturn)) {
                 val calleeMethod = currentNode.asInstanceOf[Call].callOut.head
@@ -195,27 +192,27 @@ object CFGraphPathBuilder {
             // try to extend the path inter-procedurally
             if (branchingNodes.isEmpty && !isLoopNode) {
               if (callInStack.nonEmpty) {
-                branchingNodes = List(newCallInStack.head)
+//                branchingNodes = List(newCallInStack.head)
+                branchingNodes = newCallInStack.head.cfgIn.dedup.map(_.asInstanceOf[CfgNode]).toList
                 newCallInStack = newCallInStack.tail
               } else {
                 branchingNodes = currentNode.method.callIn.dedup.map(_.asInstanceOf[CfgNode]).toList
               }
             }
             // Extend the list of nodes to expand with the branching nodes and the extended path
-            val newNodesToExpand = branchingNodes.map(bn => (bn, extendedPath, updatedVisitedNodes))
+            val newNodesToExpand = branchingNodes.map(bn => (bn, extendedPath, updatedVisitedNodes, newCallInStack))
 //            val branchingNodesCodes = branchingNodes.iterator.code.l.mkString("\n")
 //            println(s"Current node: ${currentNode.code}\nExtended path: ${extendedPath.code.l}\nBranching into nodes: \n$branchingNodesCodes\nNew call in stack:$newCallInStack\n\n")
-
             if (newNodesToExpand.isEmpty) {
-              if (!isLoopNode) iterate(rest, extendedPath :: acc, newCallInStack, stepsLeft) else iterate(rest, acc, newCallInStack, stepsLeft)
+              if (!isLoopNode) iterate(rest, extendedPath :: acc, stepsLeft) else iterate(rest, acc, stepsLeft)
             } else {
-              iterate(rest ::: newNodesToExpand, acc, newCallInStack, stepsLeft - 1)
+              iterate(rest ::: newNodesToExpand, acc, stepsLeft - 1)
             }
           }
       }
     }
 
-    iterate(List((nodeToExpand, List(), MultiSet.empty[CfgNode])), Nil, List(), steps)
+    iterate(List((nodeToExpand, List(), MultiSet.empty[CfgNode], List())), Nil, steps)
   }
 
   def generateAllExecPathsInterProc(nodeToExpand: CfgNode, steps: Int = Int.MaxValue)(implicit cpg: Cpg): List[List[CfgNode]] = {
