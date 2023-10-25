@@ -8,15 +8,36 @@ import java.nio.file.Paths
 
 // A trait for extracting slices
 trait ExecPathExtractor[N, EncodedObj] {
-  def extract(slice: List[N])(implicit cpg: Cpg): EncodedObj
+  def extract(slice: List[N], inOrderOfList: Boolean)(implicit cpg: Cpg): EncodedObj
 }
 
 class ExecPath2CodeExtractor extends ExecPathExtractor[AstNode, List[String]] {
 
   // Extracts code slices based on provided AstNodes
-  def extract(execPath: List[AstNode])(implicit cpg: Cpg): List[String] = {
+  def extract(execPath: List[AstNode], inOrderOfList: Boolean = false)(implicit cpg: Cpg): List[String] = {
     val path = Paths.get(cpg.metaData.root.head, execPath.iterator.file.name.head).toString
-    getLines(path, execPath.iterator)
+    if (!inOrderOfList) getLines(path, execPath.iterator) else getLinesInOrderOfIterator(path, execPath.iterator)
+  }
+
+  // Returns the lines of code based on provided file name and AstNodes, allowing duplicates
+  def getLinesInOrderOfIterator(fileName: String, nodes: Iterator[AstNode]): List[String] = {
+    val fileContent = readFile(fileName)
+    val codeLines = fileContent.split("\n")
+
+    nodes.filter(!_.isBlock).foldLeft(List.empty[String], Option.empty[Int]) { case ((acc, lastLine), node) =>
+      val lineNumber = Option(node.propertiesMap.get("LINE_NUMBER").asInstanceOf[Int])
+      lineNumber match {
+        case Some(ln) if lastLine.contains(ln) => (acc, lastLine) // If the line number is the same as the last, do not add to acc
+        case Some(ln) =>
+          val maybeLine = codeLines.lift(ln - 1)
+          maybeLine match {
+            case Some(line) if acc.lastOption.contains(line) => (acc, Some(ln)) // If last added line is the same, do not add
+            case Some(line) => (acc :+ line, Some(ln)) // Only add line if it exists and is different from the last added line
+            case None => (acc, lastLine) // If the line does not exist, continue without adding anything but do not change the lastLine
+          }
+        case None => (acc, None)
+      }
+    }._1
   }
 
   // Returns the lines of code based on provided file name and AstNodes
