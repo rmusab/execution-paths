@@ -40,6 +40,8 @@ object CFGraphPathBuilder {
         case None => this
       }
     }
+
+    def toSet: Set[T] = counts.keySet
   }
 
   /**
@@ -193,15 +195,82 @@ object CFGraphPathBuilder {
   }
 
   /**
+   * Traverse the data dependency graph (DDG) backwards from a starting node, considering inter-procedural dependencies.
+   * The traversal also accounts for intermediate function calls and attempts to 'crawl' inside them when they are
+   * encountered. Optionally, the search stops when the target node is encountered.
+   *
+   * Specifically, this function performs a depth-first search (DFS) on the DDG. When it encounters a function call,
+   * it will try to dive inside that function and continue the traversal from its return node.
+   * If the traversal within the function finishes and there are no preceding nodes, the traversal will attempt
+   * to move backwards inter-procedurally, either by resuming within the scope of the node that had the function call
+   * or by checking the callers of the current method.
+   *
+   * Note: The traversal stops further exploring a specific node once it has been visited three times. This is to avoid
+   * getting stuck in potential cycles.
+   *
+   * @param startNode   The starting node from which the traversal begins.
+   * @param upUntilNode Optional node to stop the traversal (source). If provided, result is generated up to this node.
+   * @param cpg         The code property graph, an implicit parameter used for the traversal.
+   * @return A multi-set of `CfgNode` which represents the nodes visited during the traversal.
+   */
+  def traverseDdgBackwardsInterProcWithCrawlInUpUntilNode(startNode: CfgNode, upUntilNode: Option[CfgNode] = None)(implicit cpg: Cpg): MultiSet[CfgNode] = {
+    @scala.annotation.tailrec
+    def dfs(stack: List[(CfgNode, List[CfgNode])], visited: MultiSet[CfgNode]): MultiSet[CfgNode] = {
+      stack match {
+        case Nil => visited
+        case (currentNode, callInStack) :: rest =>
+          // Check if currentNode is the same as upUntilNode or upUntilNode is None
+          val reachedUpUntilNode = upUntilNode.exists(_ == currentNode)
+          if (visited.count(currentNode) >= 3) {
+            dfs(rest, visited)
+          } else if (reachedUpUntilNode) {
+            val updatedVisited = visited.add(currentNode)
+            dfs(rest, updatedVisited) // if reached target node, add the extended path to acc
+          } else {
+            val updatedVisited = visited.add(currentNode)
+            // Find the predecessors of the current node
+            var newCallInStack = callInStack
+            var predecessors: List[CfgNode] =
+              if (currentNode.isCall
+                && currentNode.asInstanceOf[Call].callOut.nonEmpty
+                && !currentNode.asInstanceOf[Call].callOut.head.cfgNode.exists(visited.contains)
+                && !currentNode.asInstanceOf[Call].callOut.head.isExternal
+                && currentNode.asInstanceOf[Call].callOut.head.cfgNode.exists(_.isReturn)) { // to handle: what if there are multiple signatures?
+                val calleeMethod = currentNode.asInstanceOf[Call].callOut.head
+                val calleeReturnNode = calleeMethod.cfgNode.filter(_.isReturn).head // to handle: what if there are multiple return statements in the callee method?
+                newCallInStack = currentNode +: newCallInStack
+                List(calleeReturnNode)
+              } else toExtendedCfgNode(currentNode).ddgIn.l
+            // If there are no preceding nodes to the current one,
+            // try to go backwards inter-procedurally
+            if (predecessors.isEmpty) {
+              if (callInStack.nonEmpty) {
+                predecessors = List(newCallInStack.head)
+                newCallInStack = newCallInStack.tail
+              } else {
+                predecessors = currentNode.method.callIn.dedup.map(_.asInstanceOf[CfgNode]).l
+              }
+            }
+            val newNodesToExpand = predecessors.map(bn => (bn, newCallInStack))
+            dfs(rest ::: newNodesToExpand, updatedVisited)
+          }
+      }
+    }
+
+    dfs(List((startNode, List())), MultiSet.empty[CfgNode])
+  }
+
+  /**
    * Generates all execution paths (intra- and inter-procedurally) from the given starting node,
    * optionally up to a specified node.
    *
    * The method traverses both within the method's scope and across method calls, and can further
-   * extend its traversal through the 'crawl-in' of the method. It also offers options to filter
-   * paths based on data dependency and to only consider call nodes.
+   * extend its traversal through the 'crawl-in' of the intermediate method calls. It also offers
+   * options to filter paths based on data dependency to the specified starting node and to only
+   * consider call nodes.
    *
-   * @param nodeToExpand  The starting node from which execution paths should be generated.
-   * @param upUntilNode   Optional node to stop the traversal. If provided, paths are generated up to this node.
+   * @param nodeToExpand  The starting node (sink) from which execution paths should be generated.
+   * @param upUntilNode   Optional node to stop the traversal (source). If provided, paths are generated up to this node.
    * @param filterByDdg   Flag to decide whether to filter paths based on data dependency graph (DDG).
    *                      If `true`, only paths that are predecessors with respect to data dependency to
    *                      the sink node are considered. Default is `true`.
@@ -545,11 +614,6 @@ object CFGraphPathBuilder {
 
   def printAllExecPathsByLines(source: String, methodName: String, varName: String, lineNumber: Int)(implicit cpg: Cpg): Unit = {
     val startNodes = getNodesByMethodVarLineNum("Test0.java", methodName, varName, lineNumber)(cpg)
-//    val startNodes = getNodesByMethodLineNum("Test0.java", methodName, lineNumber)(cpg)
-//    val allExecPaths = generateAllExecPaths(startNodes.head)(cpg)
-//    val allExecPaths = generateAllExecPathsInterProc(startNodes.head)(cpg)
-//    val sampleSource = Some(cpg.method("getFileFromPosition").cfgNode.filter(_.code == "num").lineNumber(39).head)
-//    val allExecPaths = generateAllExecPathsInterProcWithCrawlIn(startNodes.head, upUntilNode = sampleSource, filterByDdg = true, onlyCallNodes = false)(cpg)
     val allExecPaths = generateAllExecPathsInterProcWithCrawlIn(startNodes.head, filterByDdg = true, onlyCallNodes = false)(cpg)
     for ((execPath, i) <- allExecPaths.zipWithIndex) {
       val execPathStr = execPath.reverseIterator.code.l.mkString("\n")
@@ -557,6 +621,15 @@ object CFGraphPathBuilder {
       println(s"Execution path #${i + 1}:\n$execPathStr\n\n")
       println(s"Line-wise execution path #${i + 1}:\n$execPathCodeStr\n\n")
     }
+  }
+
+  def printExecSlice(source: String, methodName: String, varName: String, lineNumber: Int)(implicit cpg: Cpg): Unit = {
+    val startNodes = getNodesByMethodVarLineNum("Test0.java", methodName, varName, lineNumber)(cpg)
+    val execSlice = traverseDdgBackwardsInterProcWithCrawlIn(startNodes.head)(cpg).toSet.toList
+//    val execPathStr = execSlice.reverseIterator.code.l.mkString("\n")
+    val execSliceCodeStr = MyExecPath2CodeExtractor(source).extract(execSlice, false)(cpg).mkString("\n")
+//    println(s"Execution slice:\n$execPathStr\n\n")
+    println(s"Line-wise execution slice:\n$execSliceCodeStr\n\n")
   }
 
 }

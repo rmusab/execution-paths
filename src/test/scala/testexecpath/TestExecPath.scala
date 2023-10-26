@@ -1,7 +1,7 @@
 package testexecpath
 
 import io.shiftleft.codepropertygraph.Cpg
-import execpathbuilder.CFGraphPathBuilder.printAllExecPathsByLines
+import execpathbuilder.CFGraphPathBuilder.{printAllExecPathsByLines, printExecSlice}
 import testfixtures.JavaSrcCode2CpgFixture
 import io.shiftleft.semanticcpg.language.*
 
@@ -15,20 +15,40 @@ class TestExecPath extends JavaSrcCode2CpgFixture(withOssDataflow = true) {
   }
 
   def testGetAllExecPaths(fileAbsPath: String, methodName: String, varName: String, lineNumber: Int): Unit = {
-    val source = scala.io.Source.fromFile(fileAbsPath).mkString
+    val source = scala.io.Source.fromFile(fileAbsPath)
+    val content = source.mkString
+    source.close()
     println(s"Source: \n$source\n")
-    val cpg = getCpg(source)
-    printAllExecPathsByLines(source, methodName, varName, lineNumber)(cpg)
+    val cpg = getCpg(content)
+    printAllExecPathsByLines(content, methodName, varName, lineNumber)(cpg)
   }
 
-//  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedIfTest.java", "main", "e", 19)
-//  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/Loop1.java", "main", "i", 4)
-//  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/Loop2.java", "main", "i", 5)
-//  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/Loop3.java", "main", "i", 6)
-//  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedLoops1.java", "main", "a", 12)
-//  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedLoopIfs.java", "getISmtokenPos", "num", 16)
-//  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/NestedLoopIfs2.java", "getISmtokenPos", "file", 27)
-  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/InterProcedural1.java", "accessFile", "file", 55)
-//  testGetAllExecPaths("/home/ravil/IdeaProjects/execution-paths/data/InterProcedural2.java", "processInput", "input", 13)
+  def testGetExecSlice(fileAbsPath: String, methodName: String, varName: String, lineNumber: Int): Unit = {
+    val source = scala.io.Source.fromFile(fileAbsPath)
+    val content = source.mkString
+    source.close()
+    println(s"Source: \n$source\n")
+    val cpg = getCpg(content)
+    printExecSlice(content, methodName, varName, lineNumber)(cpg)
+  }
+
+//  testGetAllExecPaths("src/test/resources/NestedIfTest.java", "main", "e", 19)
+
+//  testGetAllExecPaths("src/test/resources/Loop1.java", "main", "i", 4)
+
+//  testGetAllExecPaths("src/test/resources/Loop2.java", "main", "i", 5)
+
+//  testGetAllExecPaths("src/test/resources/Loop3.java", "main", "i", 6)
+
+//  testGetAllExecPaths("src/test/resources/NestedLoops1.java", "main", "a", 12)
+
+//  testGetAllExecPaths("src/test/resources/NestedLoopIfs.java", "getISmtokenPos", "num", 16)
+
+//  testGetAllExecPaths("src/test/resources/NestedLoopIfs2.java", "getISmtokenPos", "file", 27)
+
+//  testGetAllExecPaths("src/test/resources/InterProcedural1.java", "accessFile", "file", 55)
+  testGetExecSlice("src/test/resources/InterProcedural1.java", "accessFile", "file", 55)
+
+//  testGetAllExecPaths("src/test/resources/InterProcedural2.java", "processInput", "input", 13)
 
 }
